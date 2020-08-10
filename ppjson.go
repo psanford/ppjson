@@ -13,8 +13,9 @@ import (
 
 var inFile = flag.String("in", "", "input file (defaults to stdin)")
 var outFile = flag.String("out", "", "output file (defaults to stdout)")
+var ugly = flag.Bool("ugly", false, "format compactly")
 var replace = flag.Bool("replace", false, "update file inplace")
-var stream = flag.Bool("stream", false, "Read streaming input")
+var stream = flag.Bool("stream", false, "read streaming input")
 
 func main() {
 	flag.BoolVar(replace, "i", false, "update file inplace")
@@ -83,7 +84,9 @@ func main() {
 func streamDecode(input io.Reader, output io.Writer) {
 	dec := json.NewDecoder(input)
 	enc := json.NewEncoder(output)
-	enc.SetIndent("", "  ")
+	if !*ugly {
+		enc.SetIndent("", "  ")
+	}
 	var msg json.RawMessage
 	for {
 		err := dec.Decode(&msg)
@@ -118,7 +121,12 @@ func singleDecode(input io.Reader, output io.Writer) {
 		log.Fatalf("Error parsing json: %s", err)
 	}
 
-	out, err := json.MarshalIndent(&msg, "", "  ")
+	var out []byte
+	if *ugly {
+		out, err = json.Marshal(&msg)
+	} else {
+		out, err = json.MarshalIndent(&msg, "", "  ")
+	}
 	if err != nil {
 		log.Fatalf("Error marshaling json: %s", err)
 	}
