@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -9,6 +10,9 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
+
+	"github.com/dtgorski/jsonlex"
 )
 
 var inFile = flag.String("in", "", "input file (defaults to stdin)")
@@ -16,6 +20,7 @@ var outFile = flag.String("out", "", "output file (defaults to stdout)")
 var ugly = flag.Bool("ugly", false, "format compactly")
 var replace = flag.Bool("replace", false, "update file inplace")
 var stream = flag.Bool("stream", false, "read streaming input")
+var streamLex = flag.Bool("lex", false, "read streaming input with lexer (memory efficient)")
 
 func main() {
 	flag.BoolVar(replace, "i", false, "update file inplace")
@@ -66,7 +71,9 @@ func main() {
 		}
 	}
 
-	if *stream {
+	if *streamLex {
+		streamLexDecode(input, output)
+	} else if *stream {
 		streamDecode(input, output)
 	} else {
 		singleDecode(input, output)
@@ -101,6 +108,61 @@ func streamDecode(input io.Reader, output io.Writer) {
 			log.Fatalf("Error encoding message: %s", err)
 		}
 	}
+}
+
+func streamLexDecode(input io.Reader, output io.Writer) {
+	var (
+		cursor = jsonlex.NewCursor(input, nil)
+		w      = bufio.NewWriter(output)
+		depth  int
+	)
+
+outer:
+	for {
+		t := cursor.Curr()
+		switch t.Kind {
+		case jsonlex.TokenEOF:
+			break outer
+		case jsonlex.TokenERR:
+			log.Fatalf("parse error")
+		case jsonlex.TokenLIT: // literal (true, false, null)
+			fmt.Fprint(w, t.String())
+		case jsonlex.TokenNUM: // float number
+			fmt.Fprint(w, t.String())
+		case jsonlex.TokenSTR: // "...\"..."
+			fmt.Fprintf(w, "\"%s\"", t.String())
+		case jsonlex.TokenCOL: // : colon
+			fmt.Fprint(w, " : ")
+		case jsonlex.TokenCOM: // , comma
+			fmt.Fprint(w, ",\n", strings.Repeat("  ", depth))
+		case jsonlex.TokenLSB: // [ left square bracket
+			if cursor.Peek().Kind == jsonlex.TokenRSB {
+				cursor.Next()
+				fmt.Fprint(w, "[]")
+			} else {
+				depth += 1
+				fmt.Fprint(w, "[\n", strings.Repeat("  ", depth))
+			}
+		case jsonlex.TokenRSB: // ] right square bracket
+			depth -= 1
+			fmt.Fprint(w, "\n", strings.Repeat("  ", depth), "]")
+		case jsonlex.TokenLCB: // { left curly brace
+			if cursor.Peek().Kind == jsonlex.TokenRCB {
+				cursor.Next()
+				fmt.Fprint(w, "{}")
+			} else {
+				depth += 1
+				fmt.Fprint(w, "{\n", strings.Repeat("  ", depth))
+			}
+		case jsonlex.TokenRCB: // } right curly brace
+			depth -= 1
+			fmt.Fprint(w, "\n", strings.Repeat("  ", depth), "}")
+		}
+
+		cursor.Next()
+	}
+
+	w.Flush()
 }
 
 func singleDecode(input io.Reader, output io.Writer) {
